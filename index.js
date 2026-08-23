@@ -4,207 +4,191 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Biến môi trường hoặc mặc định
-const serverIp = process.env.SERVER_IP || 'IP_CUA_BAN.aternos.me';
-const serverPort = process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT) : 25565;
-// Ép cứng phiên bản (ví dụ 1.21.1). Nếu muốn tự dò, đổi thành: const mcVersion = false;
+// --- CẤU HÌNH SERVER CỦA BẠN ---
+const serverIp = process.env.SERVER_IP || 'sucvatmc.aternos.me';
+const serverPort = process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT) : 29587;
 const mcVersion = '1.21.1'; 
 
-// Quản lý danh sách bot
 let bots = []; 
-let targetBotCount = 0; // Số lượng bot người dùng muốn bật
-let isSpawning = false; // Tránh spam click tạo bot
+let targetBotCount = 0; 
+let isSpawning = false;
+
+// 1. HỆ THỐNG ANTI-CRASH (Ngăn Render tắt ứng dụng khi lỗi)
+process.on('uncaughtException', (err) => {
+    console.log('[ANTI-CRASH] Đã chặn một lỗi:', err.message);
+});
+process.on('unhandledRejection', (reason, p) => {
+    console.log('[ANTI-CRASH] Từ chối Promise:', reason);
+});
+
+// 2. KHỞI ĐỘNG WEB SERVER TRƯỚC ĐỂ RENDER NHẬN DIỆN NGAY
+app.use(express.urlencoded({ extended: true }));
+app.listen(port, () => {
+    console.log(`[OK] Web Server đang chạy tại cổng ${port}`);
+});
 
 // Hàm tạo tên ngẫu nhiên
-function generateRandomName() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+function generateName() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     let name = 'Bot_';
-    for (let i = 0; i < 6; i++) {
-        name += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+    for (let i = 0; i < 5; i++) name += chars.charAt(Math.floor(Math.random() * chars.length));
     return name;
 }
 
-// Hàm khởi tạo 1 Bot
+// Xử lý tạo 1 bot
 function spawnSingleBot() {
     return new Promise((resolve) => {
-        const botName = generateRandomName();
+        const botName = generateName();
         const bot = mineflayer.createBot({
             host: serverIp,
             port: serverPort,
             username: botName,
-            version: mcVersion // Định dạng phiên bản Java (ví dụ: '1.21.1')
+            version: mcVersion
         });
 
-        // Đánh dấu trạng thái riêng của bot này
         bot.customStatus = 'Đang vào... 🟡';
         bot.customPing = 0;
 
         bot.on('login', () => { 
             bot.customStatus = 'Online 🟢'; 
-            console.log(`[+] ${botName} đã vào server.`);
-            resolve(true); // Đã vào thành công
+            console.log(`[+] ${botName} đã vào game.`);
+            resolve(true); 
         });
 
-        bot.on('end', () => { 
-            console.log(`[-] ${botName} đã mất kết nối.`);
-            removeBot(botName);
-        });
+        bot.on('end', () => { removeBot(botName); resolve(false); });
+        bot.on('kicked', () => { removeBot(botName); resolve(false); });
+        bot.on('error', () => { removeBot(botName); resolve(false); });
 
-        bot.on('kicked', (reason) => { 
-            console.log(`[!] ${botName} bị kick: ${reason}`);
-            removeBot(botName);
-        });
-
-        bot.on('error', (err) => { 
-            console.log(`[Lỗi] ${botName}: ${err.message}`);
-            removeBot(botName);
-        });
-
-        // Cập nhật ping liên tục
         setInterval(() => {
-            if (bot && bot.player) {
-                bot.customPing = bot.player.ping;
-            }
-        }, 5000);
+            if (bot && bot.player) bot.customPing = bot.player.ping;
+        }, 3000);
 
         bots.push(bot);
     });
 }
 
-// Xoá bot khỏi mảng khi bị mất kết nối
 function removeBot(username) {
     bots = bots.filter(b => b.username !== username);
 }
 
-// Quản lý việc tăng/giảm số lượng bot từ từ (tránh sập server)
+// Quản lý số lượng bot (Thêm từ từ để chống sập server)
 async function manageBots() {
     if (isSpawning) return;
     isSpawning = true;
-
-    // Nếu số lượng bot hiện tại ít hơn mục tiêu -> Thêm bot
     while (bots.length < targetBotCount) {
         await spawnSingleBot();
-        // Đợi 3 giây giữa mỗi con bot để Aternos không chặn vì spam IP
-        await new Promise(r => setTimeout(r, 3000)); 
+        await new Promise(r => setTimeout(r, 4000)); // Đợi 4s mỗi lần tạo bot
     }
-
-    // Nếu số lượng bot hiện tại nhiều hơn mục tiêu -> Tắt bớt bot
     while (bots.length > targetBotCount) {
-        const botToKick = bots.pop(); // Lấy con bot cuối cùng
-        if (botToKick) botToKick.quit();
+        const b = bots.pop();
+        if (b) b.quit();
         await new Promise(r => setTimeout(r, 1000));
     }
-
     isSpawning = false;
 }
 
-// Xoá toàn bộ bot ngay lập tức
-function stopAllBots() {
+// 3. API ĐỂ GIAO DIỆN TỰ ĐỘNG CẬP NHẬT (Không cần tải lại trang)
+app.get('/api/status', (req, res) => {
+    res.json({
+        ip: serverIp,
+        port: serverPort,
+        version: mcVersion,
+        totalBots: bots.length,
+        target: targetBotCount,
+        botList: bots.map(b => ({ name: b.username, ping: b.customPing, status: b.customStatus }))
+    });
+});
+
+// Nhận lệnh từ Form
+app.post('/set-bots', (req, res) => {
+    let amount = parseInt(req.body.amount);
+    if (isNaN(amount) || amount < 0) amount = 0;
+    if (amount > 10) amount = 10; // Tối đa 10 bot
+    targetBotCount = amount;
+    manageBots();
+    res.redirect('/');
+});
+
+app.post('/stop-all', (req, res) => {
     targetBotCount = 0;
-    bots.forEach(bot => bot.quit());
+    bots.forEach(b => b.quit());
     bots = [];
-}
+    res.redirect('/');
+});
 
-// --- GIAO DIỆN WEB (DASHBOARD) ---
-// Chấp nhận dữ liệu form từ giao diện
-app.use(express.urlencoded({ extended: true }));
-
+// 4. GIAO DIỆN CHÍNH (DASHBOARD)
 app.get('/', (req, res) => {
-    // Lấy thông tin server chung (dựa vào con bot đầu tiên nếu có)
-    let serverPlayers = (bots.length > 0 && bots[0].players) ? Object.keys(bots[0].players).length : 'Chưa kết nối';
-    
-    // Tạo danh sách HTML các bot đang chạy
-    let botListHtml = '';
-    if (bots.length === 0) {
-        botListHtml = '<p style="color:#aaa;">Chưa có bot nào đang hoạt động.</p>';
-    } else {
-        bots.forEach(b => {
-            botListHtml += `
-            <div class="bot-item">
-                <span>🤖 <b>${b.username}</b></span>
-                <span>Ping: ${b.customPing}ms 📶</span>
-                <span>${b.customStatus}</span>
-            </div>`;
-        });
-    }
-
-    const html = `
+    res.send(`
         <html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Multi-Bot Dashboard</title>
+            <title>Bot VIP Controller</title>
             <style>
-                body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; margin: 0; padding: 20px; }
-                .container { background: #1e1e1e; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); max-width: 500px; margin: auto; }
-                h1 { font-size: 24px; color: #4CAF50; text-align: center; }
-                .info-box { background: #2c2c2c; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-                .info-box p { margin: 5px 0; font-size: 15px; }
-                
-                .form-group { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-                input[type="number"] { width: 60px; padding: 8px; border-radius: 6px; border: 1px solid #4CAF50; background: #333; color: white; font-size: 16px; text-align: center;}
-                
-                .btn { padding: 12px 15px; font-size: 14px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; flex: 1; margin: 0 5px;}
-                .btn-apply { background: #FF9800; color: white; }
-                .btn-stop { background: #F44336; color: white; }
-                .btn-refresh { background: #2196F3; color: white; width: 100%; margin-top: 15px; margin-left: 0; margin-right:0;}
-                
-                .bot-list { margin-top: 20px; border-top: 1px solid #444; padding-top: 15px; }
-                .bot-item { display: flex; justify-content: space-between; background: #2a2a2a; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-size: 14px;}
+                body { font-family: sans-serif; background: #0f172a; color: white; padding: 20px; margin: 0; }
+                .card { background: #1e293b; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); max-width: 500px; margin: auto; }
+                h1 { color: #38bdf8; text-align: center; margin-top: 0;}
+                .box { background: #334155; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 15px;}
+                input[type="number"] { width: 70px; padding: 10px; border-radius: 6px; border: none; background: #0f172a; color: white; font-size: 16px; text-align: center; font-weight: bold;}
+                .btn { padding: 12px; font-size: 14px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; color: white; width: 100%; margin-top: 10px;}
+                .btn-green { background: #22c55e; }
+                .btn-red { background: #ef4444; }
+                .bot-item { display: flex; justify-content: space-between; background: #475569; padding: 12px; border-radius: 6px; margin-bottom: 8px; font-size: 14px;}
             </style>
         </head>
         <body>
-            <div class="container">
-                <h1>🎮 Multi-Bot Controller</h1>
-                
-                <div class="info-box">
-                    <p><strong>🌐 IP Server:</strong> ${serverIp}</p>
-                    <p><strong>📦 Phiên bản:</strong> ${mcVersion}</p>
-                    <p><strong>👥 Số người trong Server:</strong> ${serverPlayers}</p>
-                    <p><strong>🤖 Số lượng Bot hiện tại:</strong> ${bots.length} / ${targetBotCount}</p>
+            <div class="card">
+                <h1>🎮 Bảng Điều Khiển VIP</h1>
+                <div class="box" id="info-box">
+                    <p>⏳ Đang tải dữ liệu server...</p>
                 </div>
-
-                <form action="/set-bots" method="POST" class="form-group">
-                    <label style="font-weight:bold;">Chỉnh số lượng Bot:</label>
+                
+                <form action="/set-bots" method="POST" style="display:flex; justify-content:space-between; align-items:center;">
+                    <b>Số lượng Bot cần chạy:</b>
                     <input type="number" name="amount" value="${targetBotCount}" min="0" max="10">
-                    <button type="submit" class="btn btn-apply">GỬI</button>
+                    <button type="submit" class="btn btn-green" style="width: auto; margin-top:0;">LƯU & CHẠY</button>
                 </form>
 
-                <div style="display: flex;">
-                    <form action="/stop-all" method="POST" style="flex:1; margin:0;">
-                        <button type="submit" class="btn btn-stop" style="width:100%;">⏹ TẮT TOÀN BỘ BOT</button>
-                    </form>
-                </div>
+                <form action="/stop-all" method="POST">
+                    <button type="submit" class="btn btn-red">⏹ TẮT TOÀN BỘ BOT</button>
+                </form>
 
-                <button class="btn btn-refresh" onclick="location.reload()">🔄 LÀM MỚI TRANG</button>
-
-                <div class="bot-list">
-                    <h3 style="margin-top:0; color:#aaa; font-size:16px;">Danh sách Bot đang chạy:</h3>
-                    ${botListHtml}
+                <h3 style="color:#cbd5e1; margin-top: 20px; font-size:16px;">🔥 Danh sách Bot:</h3>
+                <div id="bot-list">
+                    <p style="color:#94a3b8; font-size: 14px;">Chưa có bot nào...</p>
                 </div>
             </div>
+
+            <script>
+                // Tự động làm mới dữ liệu mỗi 2 giây
+                setInterval(async () => {
+                    try {
+                        const res = await fetch('/api/status');
+                        const data = await res.json();
+                        
+                        document.getElementById('info-box').innerHTML = \`
+                            <p>🌐 <b>IP:</b> \${data.ip}:\${data.port}</p>
+                            <p>📦 <b>Phiên bản:</b> \${data.version}</p>
+                            <p>🤖 <b>Trạng thái Bot:</b> \${data.totalBots} / \${data.target} đang hoạt động</p>
+                        \`;
+
+                        let botHtml = '';
+                        if (data.botList.length === 0) {
+                            botHtml = '<p style="color:#94a3b8; font-size: 14px;">Chưa có bot nào đang chạy.</p>';
+                        } else {
+                            data.botList.forEach(b => {
+                                botHtml += \`
+                                <div class="bot-item">
+                                    <span>🤖 <b>\${b.name}</b></span>
+                                    <span>Ping: \${b.ping}ms</span>
+                                    <span>\${b.status}</span>
+                                </div>\`;
+                            });
+                        }
+                        document.getElementById('bot-list').innerHTML = botHtml;
+                    } catch (e) {}
+                }, 2000);
+            </script>
         </body>
         </html>
-    `;
-    res.send(html);
+    `);
 });
-
-// API nhận lệnh đổi số lượng bot từ form
-app.post('/set-bots', (req, res) => {
-    let amount = parseInt(req.body.amount);
-    // Giới hạn tối đa 10 bot để Render không bị sập (hết RAM)
-    if (isNaN(amount) || amount < 0) amount = 0;
-    if (amount > 10) amount = 10; 
-    
-    targetBotCount = amount;
-    manageBots(); // Gọi hàm xử lý tăng/giảm bot
-    res.redirect('/');
-});
-
-// API nhận lệnh tắt toàn bộ
-app.post('/stop-all', (req, res) => {
-    stopAllBots();
-    res.redirect('/');
-});
-
-app.listen(port, () => console.log(\`Dashboard Multi-bot chạy trên cổng \${port}\`));
