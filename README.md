@@ -11,7 +11,7 @@
 - API: OpenAI Responses, Google Gemini, Anthropic Claude, và endpoint OpenAI-compatible (ví dụ các dịch vụ DeepSeek/Groq/Mistral nếu tài khoản của bạn có API phù hợp).
 - Markdown, bảng, code block; lịch sử chat PostgreSQL.
 - API key cá nhân được mã hóa ở backend bằng AES-256-GCM.
-- Root scripts giúp cài và chạy cả frontend/backend dễ hơn; Docker Compose tạo PostgreSQL local.
+- Cấu trúc đã rút gọn: mã backend và frontend nằm trực tiếp trong hai thư mục tương ứng, không còn thư mục src lồng bên trong. Root scripts giúp cài và chạy cả frontend/backend; Docker Compose tạo PostgreSQL local.
 - Tra cứu web bằng OpenAI web search, Gemini Google Search grounding hoặc Firecrawl adapter tùy cấu hình.
 - Đính kèm tệp văn bản/code để phân tích; xuất lịch sử hội thoại thành Markdown.
 
