@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: airoom
+      POSTGRES_USER: airoom_user
+      POSTGRES_PASSWORD: airoom_local_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - airoom_pgdata:/var/lib/postgresql/data
+volumes:
+  airoom_pgdata:
